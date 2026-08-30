@@ -145,6 +145,14 @@ def test_shortcut_share_rejects_html_without_pdf_link(tmp_path: Path, monkeypatc
     assert "did not contain a direct PDF link" in response.json()["detail"]
 
 
+def test_find_shared_url_accepts_signed_s3_pdf_without_pdf_path():
+    url = (
+        "https://example-bucket.s3.eu-central-1.amazonaws.com/object-token"
+        "?response-content-type=application%2Fpdf&response-content-disposition=inline%3B%20filename%3D%22label.pdf%22"
+    )
+    assert main.find_shared_url(f"<html><a href=\"{url}\">Download</a></html>".encode()) == url
+
+
 def test_shortcut_share_downloads_urlencoded_link(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(main, "store", DocumentStore(tmp_path / "documents"))
     monkeypatch.setattr(main, "DATA", tmp_path)

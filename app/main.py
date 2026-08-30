@@ -144,7 +144,12 @@ def find_shared_url(content: bytes) -> str | None:
     if re.fullmatch(r"https://[^\s<>\"']+", text):
         return text
     urls = re.findall(r"https://[^\s<>\"']+", text)
-    return next((url for url in urls if ".pdf" in urlsplit(url).path.lower()), None)
+    for url in urls:
+        parsed = urlsplit(url)
+        query = parsed.query.lower()
+        if ".pdf" in parsed.path.lower() or "application/pdf" in query or ".pdf" in unquote(query):
+            return url.rstrip(".,;)")
+    return None
 
 
 def download_shared_url(source_url: str) -> tuple[str, bytes, str | None]:
