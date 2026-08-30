@@ -1,16 +1,85 @@
 # Label Local
 
-Label Local turns shipping paperwork into 4 × 6 labels. It runs entirely on a home network, accepts PDFs, images, text, Markdown and DOCX files, suggests the label region using geometry and OCR, lets the user adjust the crop, and prints through CUPS to a DYMO LabelWriter 4XL.
+Label Local is a local web interface for a DYMO LabelWriter 4XL. It accepts shipping documents, finds the label using OCR and document geometry, and prepares a 4 × 6 print at 300 DPI.
+
+The web interface supports manual crop adjustment before printing. The iPhone API skips the editor and prints automatically.
+
+## Current home installation
+
+Open [http://10.0.0.21:8080](http://10.0.0.21:8080) while connected to the home network.
+
+The service is not authenticated and uses plain HTTP. Keep it on the trusted LAN. Do not expose port 8080 through the router or an internet-facing reverse proxy.
+
+## Web interface
+
+1. Open Label Local in a browser.
+2. Upload a PDF, image, text, Markdown, or DOCX file.
+3. Check the detected crop and adjust it if needed.
+4. Change rotation or contrast if needed.
+5. Select **Print label**.
+
+Uploads are limited to 25 MB and documents to 30 pages. Working files stay on the Label Local host.
+
+## iPhone Share Sheet shortcut
+
+The shortcut endpoint is:
+
+```text
+http://10.0.0.21:8080/api/share
+```
+
+Every successful request to this endpoint prints one label immediately. It uses the first page, detects the label, crops it, scales it to the full 4 × 6 print area, and sends it to the default DYMO queue.
+
+Create a new iOS Shortcut:
+
+1. Open the Shortcut details and enable **Show in Share Sheet**.
+2. Configure it to accept files.
+3. Add **Get Contents of URL**.
+4. Set the URL to `http://10.0.0.21:8080/api/share`.
+5. Set the method to **POST**.
+6. Set the request body to **Form**.
+7. Add a field named `file`, choose the **File** type, and set its value to **Shortcut Input**.
+8. Optionally add **Show Notification** with `Label sent to printer`.
+
+The Shortcut works only while the iPhone can reach Label Local on the home network.
+
+## API
+
+Multipart upload:
+
+```sh
+curl -F file=@label.pdf http://10.0.0.21:8080/api/share
+```
+
+This command prints immediately.
+
+The endpoint also accepts the file as a raw request body. Supply its original name using a query parameter or header:
+
+```sh
+curl --data-binary @label.pdf \
+  'http://10.0.0.21:8080/api/share?filename=label.pdf'
+```
+
+A successful response includes `status: queued`, the CUPS message, and the detected crop coordinates. A printer failure returns HTTP 503.
 
 ## Run with Docker
+
+Requirements:
+
+- Docker with Compose support
+- A working CUPS queue on the Docker host
+- The DYMO queue named `DYMO_LabelWriter_4XL`
+- The host CUPS socket at `/run/cups/cups.sock`
+
+Start the application:
 
 ```sh
 docker compose up --build -d
 ```
 
-Open `http://HOST-IP:8080`. The interface is deliberately served over plain HTTP for a trusted local network and has no internet-facing authentication. Do not expose port 8080 through a router or public reverse proxy.
+Then open `http://HOST-IP:8080`.
 
-The container sends jobs to CUPS on the Docker host through its local Unix socket. The host must have the DYMO installed. Override the queue name in a `.env` file if necessary:
+Override the queue or media name in `.env` when needed:
 
 ```env
 PRINTER_NAME=DYMO_LabelWriter_4XL
@@ -26,55 +95,19 @@ python -m venv .venv
 .venv/bin/pytest
 ```
 
-Uploaded documents are transient working files under `DATA_DIR`. No document leaves the host.
-
-## iPhone share sheet shortcut
-
-Label Local exposes `POST /api/share` for iOS Shortcuts. It finds the label on the first page, scales it to the full 4 × 6 print area, and submits it to the default DYMO immediately. Shared documents expire after 24 hours.
-
-Create a Shortcut that accepts files from the Share Sheet, then add these actions:
-
-1. **Get Contents of URL**: `http://LABEL-LOCAL-IP:8080/api/share`
-2. Set method to **POST**, request body to **Form**, add the key `file`, set its type to **File**, and use **Shortcut Input** as its value.
-3. Optionally add **Show Notification** with the text `Label sent to printer`.
-
-The response still contains an `open_url` as a fallback if the automatic crop needs inspection or adjustment. Do not add **Open URLs** to the normal shortcut if the goal is one-tap printing.
-
-The endpoint also accepts a raw request body when the original filename is supplied as `?filename=label.pdf` or in the `X-Filename` header.
-
-Example multipart request:
-
-```sh
-curl -F file=@label.pdf http://LABEL-LOCAL-IP:8080/api/share
-```
-
-Example response:
-
-```json
-{
-  "document_id": "...",
-  "filename": "label.pdf",
-  "pages": 1,
-  "status": "queued",
-  "message": "request id is DYMO_LabelWriter_4XL-42 (1 file(s))",
-  "crop": {
-    "x": 0.59,
-    "y": 0.05,
-    "width": 0.37,
-    "height": 0.73,
-    "confidence": 0.96,
-    "reason": "label wording, border, and barcode-like detail"
-  },
-  "open_url": "http://LABEL-LOCAL-IP:8080/?document=...&name=label.pdf"
-}
-```
-
-The Shortcut only works while the phone can reach Label Local on the home network.
+The development server can process and preview documents without a printer. Actual printing requires access to a configured CUPS queue.
 
 ## Proxmox deployment
 
-The home deployment uses a dedicated Debian LXC with Docker nesting enabled. CUPS runs inside the LXC and owns the USB-connected DYMO; the application remains in its Docker container and submits jobs through the mounted local CUPS socket. CUPS is not exposed as a network service.
+The current deployment is Proxmox LXC 116 at `10.0.0.21`:
 
-The LXC is privileged because raw USB printer passthrough and nested Docker need host-level device access. Keep the service on the trusted LAN, do not configure router port forwarding, and do not publish it through an internet-facing reverse proxy.
+- Debian 13
+- Privileged LXC
+- Docker nesting enabled
+- Raw DYMO USB device passed into the LXC
+- CUPS running inside the LXC
+- Label Local running as a Docker container
+- CUPS shared with the application through `/run/cups/cups.sock`
+- LXC and application container configured to start automatically
 
-The files in `deploy/proxmox` keep passthrough working if the printer is unplugged and Linux assigns it a new USB device number. The udev rule identifies the DYMO by vendor/product ID and asks systemd to update container 116, restarting that container only when its device path changed.
+The current USB passthrough path is `/dev/bus/usb/005/002`. Linux may assign a different device number after the printer is unplugged. The optional files under `deploy/proxmox` can update container 116 when that happens, but this host-level automation is not installed by default and should be reviewed before use.
