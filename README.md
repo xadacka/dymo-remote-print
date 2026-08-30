@@ -50,9 +50,10 @@ Do not use a Form request body for this Shortcut. It converts PDFs into URL-enco
 When sharing a Vinted label page, use a second Shortcut that sends its link instead of the page HTML:
 
 1. Enable **Show in Share Sheet** and accept URLs.
-2. Add a **Text** action containing `http://10.0.0.21:8080/api/share?source_url=` followed by **Shortcut Input**.
-3. Add **Get Contents of URL**, set its URL to that Text result, and set the method to **POST** with no request body.
-4. Use the same `status` check as above before showing a success notification.
+2. Add a **URL Encode** action and set its value to **Shortcut Input**.
+3. Add a **Text** action containing `http://10.0.0.21:8080/api/share?source_url=` followed by the URL-encoded result.
+4. Add **Get Contents of URL**, set its URL to that Text result, and set the method to **POST** with no request body.
+5. Use the same `status` check as above before showing a success notification.
 
 Label Local downloads the HTTPS link itself, detects the label in the PDF, and prints it. It no longer prints a shared HTML page as text.
 
