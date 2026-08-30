@@ -54,6 +54,9 @@ def test_rejects_oversized_crop(tmp_path: Path, monkeypatch):
 
 def test_shortcut_share_returns_editor_url(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(main, "store", DocumentStore(tmp_path / "documents"))
+    monkeypatch.setattr(main, "DATA", tmp_path)
+    printed = []
+    monkeypatch.setattr(main, "print_label", lambda image, output, printer, copies: printed.append((image.size, copies)) or "queued")
     response = request(main.app, "POST", "/api/share", files={
         "file": ("vinted-label.txt", b"TO CUSTOMER\nTRACKING 123", "text/plain")
     })
@@ -62,6 +65,9 @@ def test_shortcut_share_returns_editor_url(tmp_path: Path, monkeypatch):
     assert data["pages"] == 1
     assert data["filename"] == "vinted-label.txt"
     assert f"document={data['document_id']}" in data["open_url"]
+    assert data["status"] == "queued"
+    assert data["message"] == "queued"
+    assert printed == [((1200, 1800), 1)]
 
     details = request(main.app, "GET", f"/api/documents/{data['document_id']}")
     assert details.json()["pages"] == 1
@@ -69,6 +75,8 @@ def test_shortcut_share_returns_editor_url(tmp_path: Path, monkeypatch):
 
 def test_shortcut_share_accepts_raw_body(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(main, "store", DocumentStore(tmp_path / "documents"))
+    monkeypatch.setattr(main, "DATA", tmp_path)
+    monkeypatch.setattr(main, "print_label", lambda *args, **kwargs: "queued")
     response = request(main.app, "POST", "/api/share?filename=note.txt", content=b"A label")
     assert response.status_code == 200
     assert response.json()["filename"] == "note.txt"

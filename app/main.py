@@ -70,7 +70,7 @@ def save_document(filename: str, content: bytes) -> dict:
 
 @app.post("/api/share")
 async def shortcut_share(request: Request, filename: str | None = None) -> dict:
-    """Accept a file from iOS Shortcuts and return a URL that opens it in the editor."""
+    """Accept a file from iOS Shortcuts, detect its label, and print it immediately."""
     content_type = request.headers.get("content-type", "")
     if content_type.startswith("multipart/form-data"):
         form = await request.form()
@@ -90,6 +90,21 @@ async def shortcut_share(request: Request, filename: str | None = None) -> dict:
         "name": document["filename"],
     })
     document["open_url"] = f"{str(request.base_url).rstrip('/')}/?{query}"
+    source = store.page(document["document_id"], 0)
+    with Image.open(source) as image:
+        detection = detect_label(image)
+    crop = detection.as_dict()
+    label = prepare_label(source, crop, contrast=1.15)
+    output = DATA / f"print-{document['document_id']}-0.png"
+    try:
+        message = print_label(label, output, printer=None, copies=1)
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    document.update({
+        "status": "queued",
+        "message": message,
+        "crop": crop,
+    })
     return document
 
 

@@ -30,14 +30,15 @@ Uploaded documents are transient working files under `DATA_DIR`. No document lea
 
 ## iPhone share sheet shortcut
 
-Label Local exposes `POST /api/share` for iOS Shortcuts. The response contains an `open_url` that opens the uploaded file directly in the crop editor. Shared documents expire after 24 hours.
+Label Local exposes `POST /api/share` for iOS Shortcuts. It finds the label on the first page, scales it to the full 4 × 6 print area, and submits it to the default DYMO immediately. Shared documents expire after 24 hours.
 
 Create a Shortcut that accepts files from the Share Sheet, then add these actions:
 
 1. **Get Contents of URL**: `http://LABEL-LOCAL-IP:8080/api/share`
 2. Set method to **POST**, request body to **Form**, add the key `file`, set its type to **File**, and use **Shortcut Input** as its value.
-3. **Get Dictionary Value**: retrieve `open_url` from the previous action.
-4. **Open URLs**: open that value.
+3. Optionally add **Show Notification** with the text `Label sent to printer`.
+
+The response still contains an `open_url` as a fallback if the automatic crop needs inspection or adjustment. Do not add **Open URLs** to the normal shortcut if the goal is one-tap printing.
 
 The endpoint also accepts a raw request body when the original filename is supplied as `?filename=label.pdf` or in the `X-Filename` header.
 
@@ -54,6 +55,16 @@ Example response:
   "document_id": "...",
   "filename": "label.pdf",
   "pages": 1,
+  "status": "queued",
+  "message": "request id is DYMO_LabelWriter_4XL-42 (1 file(s))",
+  "crop": {
+    "x": 0.59,
+    "y": 0.05,
+    "width": 0.37,
+    "height": 0.73,
+    "confidence": 0.96,
+    "reason": "label wording, border, and barcode-like detail"
+  },
   "open_url": "http://LABEL-LOCAL-IP:8080/?document=...&name=label.pdf"
 }
 ```
