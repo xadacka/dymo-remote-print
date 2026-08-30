@@ -8,7 +8,7 @@ from html import unescape
 from io import BytesIO
 from pathlib import Path
 from typing import Annotated
-from urllib.parse import unquote, urlencode, urlsplit
+from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 from urllib.request import Request as UrlRequest, urlopen
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -173,11 +173,13 @@ async def shortcut_share(request: Request, filename: str | None = None, source_u
         content_type = request.headers.get("content-type", "")
         media_type: str | None = content_type
         if content_type.startswith("application/x-www-form-urlencoded"):
-            raise HTTPException(
-                400,
-                "The Shortcut sent URL-encoded text, not a file. Set Request Body to File and use Shortcut Input.",
-            )
-        if content_type.startswith("multipart/form-data"):
+            form_text = (await request.body()).decode("utf-8", errors="replace")
+            fields = parse_qs(form_text, keep_blank_values=True)
+            shared_url = next((find_shared_url(value.encode("utf-8")) for values in fields.values() for value in values), None)
+            if not shared_url:
+                raise HTTPException(400, "The URL-encoded Shortcut input was not a downloadable HTTPS link")
+            filename, content, media_type = await run_in_threadpool(download_shared_url, shared_url)
+        elif content_type.startswith("multipart/form-data"):
             form = await request.form()
             incoming = form.get("file")
             if incoming is None:
