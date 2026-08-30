@@ -135,6 +135,11 @@ async def shortcut_share(request: Request, filename: str | None = None) -> dict:
     """Accept a file from iOS Shortcuts, detect its label, and print it immediately."""
     content_type = request.headers.get("content-type", "")
     media_type: str | None = content_type
+    if content_type.startswith("application/x-www-form-urlencoded"):
+        raise HTTPException(
+            400,
+            "The Shortcut sent URL-encoded text, not a file. Set Request Body to File and use Shortcut Input.",
+        )
     if content_type.startswith("multipart/form-data"):
         form = await request.form()
         incoming = form.get("file")

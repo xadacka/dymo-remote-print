@@ -108,3 +108,14 @@ def test_shortcut_share_identifies_raw_pdf_without_filename(tmp_path: Path, monk
     )
     assert response.status_code == 200
     assert response.json()["filename"] == "shortcut-upload.pdf"
+
+
+def test_shortcut_share_rejects_urlencoded_file_text(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(main, "store", DocumentStore(tmp_path / "documents"))
+    monkeypatch.setattr(main, "print_label", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not print")))
+    response = request(
+        main.app, "POST", "/api/share", content=b"file=%EF%BF%BDPDF",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 400
+    assert "Request Body to File" in response.json()["detail"]

@@ -37,11 +37,13 @@ Create a new iOS Shortcut:
 3. Add **Get Contents of URL**.
 4. Set the URL to `http://10.0.0.21:8080/api/share`.
 5. Set the method to **POST**.
-6. Set the request body to **Form**.
-7. Add a field named `file`, choose the **File** type, and set its value to **Shortcut Input**.
+6. Set the request body to **File**.
+7. Set that file value to **Shortcut Input**.
 8. Add **Get Dictionary Value** and retrieve `status` from the response.
 9. Add an **If** action that shows `Label sent to printer` only when `status` is `queued`.
 10. In the **Otherwise** branch, show the response so a failed upload is visible instead of reporting success.
+
+Do not use a Form request body for this Shortcut. It converts PDFs into URL-encoded text and cannot print a valid label.
 
 The Shortcut works only while the iPhone can reach Label Local on the home network.
 
