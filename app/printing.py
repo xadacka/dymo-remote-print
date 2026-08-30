@@ -28,7 +28,8 @@ def prepare_label(source: Path, crop: dict[str, float], rotation: int = 0, contr
     y2 = max(y1 + 1, min(height, round((crop["y"] + crop["height"]) * height)))
     image = image.crop((x1, y1, x2, y2))
     image = ImageEnhance.Contrast(ImageOps.grayscale(image)).enhance(max(0.5, min(2.5, contrast)))
-    image.thumbnail(LABEL_SIZE, Image.Resampling.LANCZOS)
+    scale = min(LABEL_SIZE[0] / image.width, LABEL_SIZE[1] / image.height)
+    image = image.resize((max(1, round(image.width * scale)), max(1, round(image.height * scale))), Image.Resampling.LANCZOS)
     canvas = Image.new("L", LABEL_SIZE, "white")
     canvas.paste(image, ((LABEL_SIZE[0] - image.width) // 2, (LABEL_SIZE[1] - image.height) // 2))
     return canvas

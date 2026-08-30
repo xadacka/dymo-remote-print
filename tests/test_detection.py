@@ -41,3 +41,10 @@ def test_crop_coordinates_apply_after_rotation(tmp_path: Path):
     image.save(source)
     label = prepare_label(source, {"x": 0, "y": 0, "width": 1, "height": 0.5}, rotation=90)
     assert label.getpixel((LABEL_SIZE[0] // 2, LABEL_SIZE[1] // 2)) == 0
+
+
+def test_small_source_is_enlarged_to_printable_area(tmp_path: Path):
+    source = tmp_path / "small.png"
+    Image.new("RGB", (300, 450), "black").save(source)
+    label = prepare_label(source, {"x": 0, "y": 0, "width": 1, "height": 1})
+    assert label.getextrema() == (0, 0)
