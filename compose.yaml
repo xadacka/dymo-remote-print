@@ -7,12 +7,12 @@ services:
       - "8080:8080"
     environment:
       DATA_DIR: /data
-      CUPS_SERVER: host.docker.internal:631
+      CUPS_SERVER: /run/cups/cups.sock
       PRINTER_NAME: ${PRINTER_NAME:-DYMO_LabelWriter_4XL}
+      PRINTER_MEDIA: ${PRINTER_MEDIA:-1744907_4_in_x_6_in}
     volumes:
       - label-data:/data
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - /run/cups/cups.sock:/run/cups/cups.sock
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
       interval: 30s
@@ -21,4 +21,3 @@ services:
 
 volumes:
   label-data:
-

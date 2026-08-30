@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+
+container_id=116
+device_path=$(readlink -f /dev/dymo-4xl)
+current=$(pct config "$container_id" 2>/dev/null | sed -n 's/^dev0: path=\([^,]*\).*/\1/p')
+
+if [ "$current" = "$device_path" ]; then
+    exit 0
+fi
+
+running=0
+if pct status "$container_id" 2>/dev/null | grep -q 'status: running'; then
+    running=1
+    pct shutdown "$container_id" --timeout 20 || pct stop "$container_id"
+fi
+
+pct set "$container_id" --dev0 "path=$device_path,gid=7,mode=0660"
+
+if [ "$running" -eq 1 ]; then
+    pct start "$container_id"
+fi

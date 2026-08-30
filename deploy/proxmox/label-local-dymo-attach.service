@@ -1,0 +1,8 @@
+[Unit]
+Description=Attach DYMO LabelWriter 4XL to Label Local LXC
+After=pve-cluster.service
+ConditionPathExists=/dev/dymo-4xl
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/label-local-dymo-attach

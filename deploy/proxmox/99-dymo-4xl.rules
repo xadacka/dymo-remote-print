@@ -1,0 +1,1 @@
+SUBSYSTEM=="usb", ATTR{idVendor}=="0922", ATTR{idProduct}=="001f", SYMLINK+="dymo-4xl", MODE="0660", GROUP="lp", TAG+="systemd", ENV{SYSTEMD_WANTS}+="label-local-dymo-attach.service"

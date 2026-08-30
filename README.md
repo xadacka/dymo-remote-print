@@ -10,10 +10,11 @@ docker compose up --build -d
 
 Open `http://HOST-IP:8080`. The interface is deliberately served over plain HTTP for a trusted local network and has no internet-facing authentication. Do not expose port 8080 through a router or public reverse proxy.
 
-The container sends jobs to CUPS on the Docker host. The host must have the DYMO installed and must allow local-network CUPS clients. Override the queue name in a `.env` file if necessary:
+The container sends jobs to CUPS on the Docker host through its local Unix socket. The host must have the DYMO installed. Override the queue name in a `.env` file if necessary:
 
 ```env
 PRINTER_NAME=DYMO_LabelWriter_4XL
+PRINTER_MEDIA=1744907_4_in_x_6_in
 ```
 
 ## Development
@@ -61,6 +62,8 @@ The Shortcut only works while the phone can reach Label Local on the home networ
 
 ## Proxmox deployment
 
-The home deployment uses a dedicated Debian LXC with Docker nesting enabled. CUPS runs inside the LXC and owns the USB-connected DYMO; the application remains in its Docker container and submits jobs to CUPS over the container bridge.
+The home deployment uses a dedicated Debian LXC with Docker nesting enabled. CUPS runs inside the LXC and owns the USB-connected DYMO; the application remains in its Docker container and submits jobs through the mounted local CUPS socket. CUPS is not exposed as a network service.
 
 The LXC is privileged because raw USB printer passthrough and nested Docker need host-level device access. Keep the service on the trusted LAN, do not configure router port forwarding, and do not publish it through an internet-facing reverse proxy.
+
+The files in `deploy/proxmox` keep passthrough working if the printer is unplugged and Linux assigns it a new USB device number. The udev rule identifies the DYMO by vendor/product ID and asks systemd to update container 116, restarting that container only when its device path changed.

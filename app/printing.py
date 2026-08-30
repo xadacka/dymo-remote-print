@@ -40,7 +40,8 @@ def print_label(image: Image.Image, output: Path, printer: str | None, copies: i
     selected = printer or os.getenv("PRINTER_NAME")
     if selected:
         command += ["-d", selected]
-    command += ["-n", str(max(1, min(10, copies))), "-o", "media=Custom.4x6in", "-o", "fit-to-page", str(output)]
+    media = os.getenv("PRINTER_MEDIA", "1744907_4_in_x_6_in")
+    command += ["-n", str(max(1, min(10, copies))), "-o", f"media={media}", "-o", "fit-to-page", str(output)]
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=20, check=False)
     except FileNotFoundError as exc:
