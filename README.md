@@ -39,7 +39,9 @@ Create a new iOS Shortcut:
 5. Set the method to **POST**.
 6. Set the request body to **Form**.
 7. Add a field named `file`, choose the **File** type, and set its value to **Shortcut Input**.
-8. Optionally add **Show Notification** with `Label sent to printer`.
+8. Add **Get Dictionary Value** and retrieve `status` from the response.
+9. Add an **If** action that shows `Label sent to printer` only when `status` is `queued`.
+10. In the **Otherwise** branch, show the response so a failed upload is visible instead of reporting success.
 
 The Shortcut works only while the iPhone can reach Label Local on the home network.
 

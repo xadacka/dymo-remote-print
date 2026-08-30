@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import tempfile
+import zipfile
+from io import BytesIO
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlencode
@@ -13,7 +15,7 @@ from pydantic import BaseModel, Field
 from PIL import Image
 
 from .detection import detect_label
-from .documents import DocumentStore, UnsupportedDocument
+from .documents import ALLOWED, DocumentStore, UnsupportedDocument
 from .printing import list_printers, prepare_label, print_label
 
 BASE = Path(__file__).resolve().parent
@@ -68,23 +70,93 @@ def save_document(filename: str, content: bytes) -> dict:
     return {"document_id": doc_id, "filename": filename, "pages": len(pages)}
 
 
+def shortcut_filename(filename: str | None, content: bytes, media_type: str | None) -> str:
+    """Recover a usable filename when iOS sends an empty or temporary name."""
+    supplied = Path(filename or "shortcut-upload").name
+    if Path(supplied).suffix.lower() in ALLOWED:
+        return supplied
+
+    media = (media_type or "").split(";", 1)[0].lower()
+    extension = {
+        "application/pdf": ".pdf",
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/webp": ".webp",
+        "image/tiff": ".tiff",
+        "text/plain": ".txt",
+        "text/markdown": ".md",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    }.get(media)
+
+    if content.startswith(b"%PDF"):
+        extension = ".pdf"
+    elif content.startswith(b"\x89PNG\r\n\x1a\n"):
+        extension = ".png"
+    elif content.startswith(b"\xff\xd8\xff"):
+        extension = ".jpg"
+    elif content[:4] in {b"II*\x00", b"MM\x00*"}:
+        extension = ".tiff"
+    elif content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+        extension = ".webp"
+    elif content.startswith(b"PK"):
+        try:
+            with zipfile.ZipFile(BytesIO(content)) as archive:
+                if "word/document.xml" in archive.namelist():
+                    extension = ".docx"
+        except zipfile.BadZipFile:
+            pass
+
+    if extension is None:
+        try:
+            content.decode("utf-8")
+            extension = ".txt"
+        except UnicodeDecodeError as exc:
+            raise HTTPException(400, "Could not identify the shared file type") from exc
+
+    stem = Path(supplied).stem if Path(supplied).suffix else supplied
+    return f"{stem or 'shortcut-upload'}{extension}"
+
+
+def shortcut_form_bytes(value: str) -> bytes:
+    """Restore a filename-less multipart value decoded as text by Starlette."""
+    utf8 = value.encode("utf-8")
+    try:
+        latin1 = value.encode("latin-1")
+    except UnicodeEncodeError:
+        return utf8
+    signatures = (b"%PDF", b"\x89PNG", b"\xff\xd8\xff", b"II*\x00", b"MM\x00*", b"RIFF", b"PK")
+    if any(latin1.startswith(signature) for signature in signatures) and not any(utf8.startswith(signature) for signature in signatures):
+        return latin1
+    return utf8
+
+
 @app.post("/api/share")
 async def shortcut_share(request: Request, filename: str | None = None) -> dict:
     """Accept a file from iOS Shortcuts, detect its label, and print it immediately."""
     content_type = request.headers.get("content-type", "")
+    media_type: str | None = content_type
     if content_type.startswith("multipart/form-data"):
         form = await request.form()
         incoming = form.get("file")
-        if incoming is None or not hasattr(incoming, "read"):
-            raise HTTPException(400, "Multipart requests need a file field named 'file'")
-        content = await incoming.read(25 * 1024 * 1024 + 1)
-        filename = getattr(incoming, "filename", None) or filename
+        if incoming is None:
+            incoming = next(iter(form.values()), None)
+        if incoming is None:
+            raise HTTPException(400, "The multipart request did not contain an attached file")
+        if hasattr(incoming, "read"):
+            content = await incoming.read(25 * 1024 * 1024 + 1)
+            filename = getattr(incoming, "filename", None) or filename
+            media_type = getattr(incoming, "content_type", None) or media_type
+        elif isinstance(incoming, str):
+            content = shortcut_form_bytes(incoming)
+        elif isinstance(incoming, bytes):
+            content = incoming
+        else:
+            raise HTTPException(400, "The multipart field was not a readable file")
     else:
         content = await request.body()
         filename = request.headers.get("x-filename") or filename
-    if not filename:
-        raise HTTPException(400, "Provide a filename query parameter or X-Filename header")
-    document = save_document(Path(filename).name, content)
+    filename = shortcut_filename(filename, content, media_type)
+    document = save_document(filename, content)
     query = urlencode({
         "document": document["document_id"],
         "name": document["filename"],

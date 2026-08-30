@@ -3,6 +3,7 @@ import asyncio
 from pathlib import Path
 
 import httpx
+import pymupdf
 
 import app.main as main
 from app.documents import DocumentStore
@@ -80,3 +81,30 @@ def test_shortcut_share_accepts_raw_body(tmp_path: Path, monkeypatch):
     response = request(main.app, "POST", "/api/share?filename=note.txt", content=b"A label")
     assert response.status_code == 200
     assert response.json()["filename"] == "note.txt"
+
+
+def test_shortcut_share_accepts_ios_attachment_without_filename(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(main, "store", DocumentStore(tmp_path / "documents"))
+    monkeypatch.setattr(main, "DATA", tmp_path)
+    monkeypatch.setattr(main, "print_label", lambda *args, **kwargs: "queued")
+    pdf = pymupdf.open()
+    pdf.new_page().insert_text((40, 80), "TO CUSTOMER TRACKING 123")
+    response = request(main.app, "POST", "/api/share", files={
+        "Shortcut Input": ("", pdf.tobytes(), "application/pdf")
+    })
+    assert response.status_code == 200
+    assert response.json()["filename"].endswith(".pdf")
+
+
+def test_shortcut_share_identifies_raw_pdf_without_filename(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(main, "store", DocumentStore(tmp_path / "documents"))
+    monkeypatch.setattr(main, "DATA", tmp_path)
+    monkeypatch.setattr(main, "print_label", lambda *args, **kwargs: "queued")
+    pdf = pymupdf.open()
+    pdf.new_page().insert_text((40, 80), "SHIPPING LABEL")
+    response = request(
+        main.app, "POST", "/api/share", content=pdf.tobytes(),
+        headers={"Content-Type": "application/pdf"},
+    )
+    assert response.status_code == 200
+    assert response.json()["filename"] == "shortcut-upload.pdf"
