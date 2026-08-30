@@ -1,0 +1,74 @@
+import io
+import asyncio
+from pathlib import Path
+
+import httpx
+
+import app.main as main
+from app.documents import DocumentStore
+
+
+def request(app, method: str, url: str, **kwargs):
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.request(method, url, **kwargs)
+    return asyncio.run(run())
+
+
+def test_upload_detect_and_preview(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(main, "store", DocumentStore(tmp_path / "documents"))
+    monkeypatch.setattr(main, "DATA", tmp_path)
+    uploaded = request(main.app, "POST", "/api/documents", files={"file": ("label.txt", io.BytesIO(b"TO\nA CUSTOMER\nTRACKING 123"), "text/plain")})
+    assert uploaded.status_code == 200
+    doc = uploaded.json()
+
+    page = request(main.app, "GET", f"/api/documents/{doc['document_id']}/pages/0.png")
+    assert page.status_code == 200
+    assert page.headers["content-type"] == "image/png"
+
+    detection = request(main.app, "POST", f"/api/documents/{doc['document_id']}/pages/0/detect")
+    assert detection.status_code == 200
+    assert 0 < detection.json()["width"] <= 1
+
+    preview = request(main.app, "POST", "/api/print", json={
+        "document_id": doc["document_id"], "page": 0,
+        "crop": {"x": 0, "y": 0, "width": 1, "height": 1},
+        "preview_only": True,
+    })
+    assert preview.status_code == 200
+    assert preview.headers["content-type"] == "image/png"
+
+
+def test_rejects_oversized_crop(tmp_path: Path, monkeypatch):
+    store = DocumentStore(tmp_path / "documents")
+    doc_id, _ = store.create("label.txt", b"label")
+    monkeypatch.setattr(main, "store", store)
+    response = request(main.app, "POST", "/api/print", json={
+        "document_id": doc_id, "page": 0,
+        "crop": {"x": 0.8, "y": 0, "width": 0.4, "height": 1},
+        "preview_only": True,
+    })
+    assert response.status_code == 422
+
+
+def test_shortcut_share_returns_editor_url(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(main, "store", DocumentStore(tmp_path / "documents"))
+    response = request(main.app, "POST", "/api/share", files={
+        "file": ("vinted-label.txt", b"TO CUSTOMER\nTRACKING 123", "text/plain")
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["pages"] == 1
+    assert data["filename"] == "vinted-label.txt"
+    assert f"document={data['document_id']}" in data["open_url"]
+
+    details = request(main.app, "GET", f"/api/documents/{data['document_id']}")
+    assert details.json()["pages"] == 1
+
+
+def test_shortcut_share_accepts_raw_body(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(main, "store", DocumentStore(tmp_path / "documents"))
+    response = request(main.app, "POST", "/api/share?filename=note.txt", content=b"A label")
+    assert response.status_code == 200
+    assert response.json()["filename"] == "note.txt"

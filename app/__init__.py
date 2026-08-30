@@ -1,0 +1,2 @@
+"""Label Local application package."""
+

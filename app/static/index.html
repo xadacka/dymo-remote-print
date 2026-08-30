@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#173f35">
+  <title>Label Local</title>
+  <link rel="stylesheet" href="/styles.css?v=4">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Label Local home">
+      <span class="brand-mark" aria-hidden="true">LL</span>
+      <span><strong>Label Local</strong></span>
+    </a>
+    <div class="connection"><span class="status-dot"></span><span id="printerStatus">Checking printer…</span></div>
+  </header>
+
+  <main>
+    <section id="emptyState" class="empty-state">
+      <h1>Print a label</h1>
+      <p class="lede">Upload a document to start.</p>
+      <label id="dropzone" class="dropzone" tabindex="0">
+        <input id="fileInput" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.txt,.md,.docx" hidden>
+        <span class="upload-icon" aria-hidden="true">↑</span>
+        <strong>Choose a file or drop it here</strong>
+        <small>PDF, image, text or Word · 25 MB max</small>
+      </label>
+    </section>
+
+    <section id="workspace" class="workspace" hidden>
+      <aside class="sidebar">
+        <button id="newFile" class="back-button">← New document</button>
+        <div class="file-card"><span class="file-icon">PDF</span><div><strong id="fileName"></strong><small id="pageCount"></small></div></div>
+        <div id="pageList" class="page-list" aria-label="Document pages"></div>
+      </aside>
+
+      <section class="editor">
+        <div class="editor-heading">
+          <div><h2>Crop</h2></div>
+          <div id="detectionBadge" class="badge">Looking for label…</div>
+        </div>
+        <p class="helper">Drag the box or its corners.</p>
+        <div id="canvasWrap" class="canvas-wrap">
+          <canvas id="editorCanvas" aria-label="Document crop editor"></canvas>
+          <div id="loading" class="loading"><span></span>Opening…</div>
+        </div>
+        <div class="toolbar" aria-label="Image adjustments">
+          <button id="rotateButton" class="tool-button" title="Rotate clockwise">↻ <span>Rotate</span></button>
+          <label class="contrast-control"><span>Contrast</span><input id="contrast" type="range" min="0.5" max="2.5" value="1.15" step="0.05"><output id="contrastValue">115%</output></label>
+          <button id="detectButton" class="tool-button">◎ <span>Find label again</span></button>
+        </div>
+      </section>
+
+      <aside class="print-panel">
+        <div><h2>Print</h2></div>
+        <div class="label-preview"><img id="printPreview" alt="Cropped label preview"></div>
+        <div class="field-row">
+          <label>Printer<select id="printerSelect"><option value="">Default printer</option></select></label>
+          <label>Copies<input id="copies" type="number" value="1" min="1" max="10"></label>
+        </div>
+        <button id="printButton" class="print-button"><span>Print label</span><kbd>⌘ ↵</kbd></button>
+        <p id="printMessage" class="print-message" role="status"></p>
+      </aside>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="alert"></div>
+  <script src="/app.js?v=5" defer></script>
+</body>
+</html>
