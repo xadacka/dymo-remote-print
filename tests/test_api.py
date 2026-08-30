@@ -119,3 +119,27 @@ def test_shortcut_share_rejects_urlencoded_file_text(tmp_path: Path, monkeypatch
     )
     assert response.status_code == 400
     assert "Request Body to File" in response.json()["detail"]
+
+
+def test_shortcut_share_downloads_shared_pdf_url(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(main, "store", DocumentStore(tmp_path / "documents"))
+    monkeypatch.setattr(main, "DATA", tmp_path)
+    monkeypatch.setattr(main, "print_label", lambda *args, **kwargs: "queued")
+    pdf = pymupdf.open()
+    pdf.new_page().insert_text((40, 80), "SHIPPING LABEL")
+    pdf_bytes = pdf.tobytes()
+    monkeypatch.setattr(main, "download_shared_url", lambda url: ("vinted.pdf", pdf_bytes, "application/pdf"))
+    async def run_inline(function, *args):
+        return function(*args)
+    monkeypatch.setattr(main, "run_in_threadpool", run_inline)
+    response = request(main.app, "POST", "/api/share?source_url=https%3A%2F%2Fexample.com%2Fvinted.pdf")
+    assert response.status_code == 200
+    assert response.json()["filename"] == "vinted.pdf"
+
+
+def test_shortcut_share_rejects_html_without_pdf_link(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(main, "store", DocumentStore(tmp_path / "documents"))
+    monkeypatch.setattr(main, "print_label", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not print")))
+    response = request(main.app, "POST", "/api/share", content=b"<html><body>Vinted page</body></html>", headers={"Content-Type": "text/html"})
+    assert response.status_code == 400
+    assert "did not contain a direct PDF link" in response.json()["detail"]

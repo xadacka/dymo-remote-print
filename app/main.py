@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import zipfile
+from html import unescape
 from io import BytesIO
 from pathlib import Path
 from typing import Annotated
-from urllib.parse import urlencode
+from urllib.parse import unquote, urlencode, urlsplit
+from urllib.request import Request as UrlRequest, urlopen
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from PIL import Image
+from starlette.concurrency import run_in_threadpool
 
 from .detection import detect_label
 from .documents import ALLOWED, DocumentStore, UnsupportedDocument
@@ -22,6 +26,7 @@ BASE = Path(__file__).resolve().parent
 DATA = Path(os.getenv("DATA_DIR", tempfile.gettempdir())) / "label-local"
 store = DocumentStore(DATA / "documents")
 app = FastAPI(title="Label Local", docs_url=None, redoc_url=None)
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
 class Crop(BaseModel):
@@ -54,12 +59,12 @@ async def printers() -> dict[str, list[str]]:
 
 @app.post("/api/documents")
 async def upload(file: Annotated[UploadFile, File(...)]) -> dict:
-    content = await file.read(25 * 1024 * 1024 + 1)
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
     return save_document(file.filename or "upload", content)
 
 
 def save_document(filename: str, content: bytes) -> dict:
-    if len(content) > 25 * 1024 * 1024:
+    if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "Files are limited to 25 MB")
     try:
         doc_id, pages = store.create(filename, content)
@@ -130,36 +135,73 @@ def shortcut_form_bytes(value: str) -> bytes:
     return utf8
 
 
+def find_shared_url(content: bytes) -> str | None:
+    """Find a direct HTTPS URL sent as text or embedded in a shared web page."""
+    try:
+        text = unescape(content.decode("utf-8")).replace("\\/", "/").strip()
+    except UnicodeDecodeError:
+        return None
+    if re.fullmatch(r"https://[^\s<>\"']+", text):
+        return text
+    urls = re.findall(r"https://[^\s<>\"']+", text)
+    return next((url for url in urls if ".pdf" in urlsplit(url).path.lower()), None)
+
+
+def download_shared_url(source_url: str) -> tuple[str, bytes, str | None]:
+    """Download a direct HTTPS file shared from an iPhone without printing its HTML wrapper."""
+    parsed = urlsplit(source_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise HTTPException(400, "Shared links must be a complete HTTPS URL")
+    try:
+        with urlopen(UrlRequest(source_url, headers={"User-Agent": "Label-Local/1.0"}), timeout=20) as response:
+            content = response.read(MAX_UPLOAD_BYTES + 1)
+            media_type = response.headers.get_content_type()
+            filename = Path(unquote(urlsplit(response.url).path)).name
+    except Exception as exc:
+        raise HTTPException(422, "Could not download the shared link") from exc
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Files are limited to 25 MB")
+    return filename or "shared-link", content, media_type
+
+
 @app.post("/api/share")
-async def shortcut_share(request: Request, filename: str | None = None) -> dict:
+async def shortcut_share(request: Request, filename: str | None = None, source_url: str | None = None) -> dict:
     """Accept a file from iOS Shortcuts, detect its label, and print it immediately."""
-    content_type = request.headers.get("content-type", "")
-    media_type: str | None = content_type
-    if content_type.startswith("application/x-www-form-urlencoded"):
-        raise HTTPException(
-            400,
-            "The Shortcut sent URL-encoded text, not a file. Set Request Body to File and use Shortcut Input.",
-        )
-    if content_type.startswith("multipart/form-data"):
-        form = await request.form()
-        incoming = form.get("file")
-        if incoming is None:
-            incoming = next(iter(form.values()), None)
-        if incoming is None:
-            raise HTTPException(400, "The multipart request did not contain an attached file")
-        if hasattr(incoming, "read"):
-            content = await incoming.read(25 * 1024 * 1024 + 1)
-            filename = getattr(incoming, "filename", None) or filename
-            media_type = getattr(incoming, "content_type", None) or media_type
-        elif isinstance(incoming, str):
-            content = shortcut_form_bytes(incoming)
-        elif isinstance(incoming, bytes):
-            content = incoming
-        else:
-            raise HTTPException(400, "The multipart field was not a readable file")
+    if source_url:
+        filename, content, media_type = await run_in_threadpool(download_shared_url, source_url)
     else:
-        content = await request.body()
-        filename = request.headers.get("x-filename") or filename
+        content_type = request.headers.get("content-type", "")
+        media_type: str | None = content_type
+        if content_type.startswith("application/x-www-form-urlencoded"):
+            raise HTTPException(
+                400,
+                "The Shortcut sent URL-encoded text, not a file. Set Request Body to File and use Shortcut Input.",
+            )
+        if content_type.startswith("multipart/form-data"):
+            form = await request.form()
+            incoming = form.get("file")
+            if incoming is None:
+                incoming = next(iter(form.values()), None)
+            if incoming is None:
+                raise HTTPException(400, "The multipart request did not contain an attached file")
+            if hasattr(incoming, "read"):
+                content = await incoming.read(MAX_UPLOAD_BYTES + 1)
+                filename = getattr(incoming, "filename", None) or filename
+                media_type = getattr(incoming, "content_type", None) or media_type
+            elif isinstance(incoming, str):
+                content = shortcut_form_bytes(incoming)
+            elif isinstance(incoming, bytes):
+                content = incoming
+            else:
+                raise HTTPException(400, "The multipart field was not a readable file")
+        else:
+            content = await request.body()
+            filename = request.headers.get("x-filename") or filename
+        shared_url = find_shared_url(content)
+        if shared_url:
+            filename, content, media_type = await run_in_threadpool(download_shared_url, shared_url)
+        elif media_type and (media_type.startswith("text/html") or b"<html" in content[:1024].lower()):
+            raise HTTPException(400, "The shared web page did not contain a direct PDF link. Send its HTTPS link as source_url instead.")
     filename = shortcut_filename(filename, content, media_type)
     document = save_document(filename, content)
     query = urlencode({
