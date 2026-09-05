@@ -1,16 +1,168 @@
 # Label Local
 
-Label Local is a local web interface for a DYMO LabelWriter 4XL. It accepts shipping documents, finds the label using OCR and document geometry, and prepares a 4 × 6 print at 300 DPI.
+Label Local is a self-hosted web app for printing shipping labels (and, in a
+pinch, ordinary photos) to a DYMO LabelWriter 4XL. Point it at a document —
+from a browser, a script, or an iPhone Share Sheet — and it finds the label
+on the page using OCR and document geometry, crops it, and prints a clean
+4 × 6 label at 300 DPI. If it can't find a label at all (a normal photo, say),
+it fills the whole page instead of guessing.
 
-The web interface supports manual crop adjustment before printing. The iPhone API skips the editor and prints automatically.
+It runs anywhere Docker does, as long as it can reach a CUPS print queue for
+your printer.
 
-## Current home installation
+## Features
 
-Open [http://10.0.0.21:8080](http://10.0.0.21:8080) while connected to the home network.
+- Upload a PDF, image, text file, Markdown, or DOCX and get a ready-to-print
+  4 × 6 label.
+- Automatic label detection using document geometry and OCR, with a manual
+  crop editor when it needs a nudge.
+- Photos and documents with no detectable label print full-bleed instead of
+  a bad guess.
+- An `/api/share` endpoint built for the iOS Share Sheet: send a file to it
+  and it prints immediately, no app required.
+- Runs as a single Docker container in front of any CUPS print queue.
 
-The service is not authenticated and uses plain HTTP. Keep it on the trusted LAN. Do not expose port 8080 through the router or an internet-facing reverse proxy.
+## Requirements
 
-## Web interface
+- Docker (with Compose support).
+- A printer added to a CUPS queue that Label Local's container can reach.
+  This project is built around a DYMO LabelWriter 4XL, but anything CUPS can
+  print to will work — adjust `PRINTER_MEDIA` for your paper size.
+
+If your printer isn't in CUPS yet, plug it in and check whether it's already
+there:
+
+```sh
+lpstat -p
+```
+
+If not, CUPS's own web interface at `http://<cups-host>:631` can usually add
+it in a couple of clicks, or on Debian/Ubuntu:
+
+```sh
+sudo apt install cups printer-driver-dymo   # driver package varies by printer
+lpadmin -p DYMO_LabelWriter_4XL -E -v usb://DYMO/LabelWriter%204XL -m everywhere
+```
+
+## Quick start
+
+Clone the repository, then choose one of the two setups below depending on
+where CUPS is running.
+
+### CUPS and Docker on the same Linux host
+
+This is the simplest setup, and how the reference deployment below works:
+share the CUPS socket directly with the container.
+
+```yaml
+# compose.yaml
+services:
+  label-local:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      PRINTER_NAME: DYMO_LabelWriter_4XL
+      PRINTER_MEDIA: 1744907_4_in_x_6_in
+    volumes:
+      - label-data:/data
+      - /run/cups:/run/cups   # the directory, not just cups.sock — see note below
+volumes:
+  label-data:
+```
+
+```sh
+docker compose up --build -d
+```
+
+> Mount the `/run/cups` **directory**, not the `cups.sock` file by itself.
+> `cupsd` deletes and recreates that socket file on every restart, which
+> orphans a file-level bind mount and silently breaks printing until the
+> container is recreated.
+
+### CUPS running elsewhere (Docker Desktop, a NAS, any other OS)
+
+Docker Desktop on macOS or Windows runs containers inside a VM that can't see
+a host Unix socket, so this is also the setup to use there. CUPS supports
+network printing out of the box — point `CUPS_SERVER` at any CUPS host on
+your network instead of mounting a socket:
+
+```yaml
+services:
+  label-local:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      CUPS_SERVER: cups-host.local:631
+      PRINTER_NAME: DYMO_LabelWriter_4XL
+      PRINTER_MEDIA: 1744907_4_in_x_6_in
+    volumes:
+      - label-data:/data
+volumes:
+  label-data:
+```
+
+The target CUPS server needs to allow remote access to the queue (`cupsctl
+--remote-any`, or enable printer sharing in its settings) and be reachable
+from wherever Docker is running.
+
+Either way, once it's up, open `http://<host-ip>:8080` in a browser.
+
+## Recommended setup: a dedicated Proxmox LXC
+
+If you run Proxmox, this is the setup this project was actually built for and
+the one that's been hardened the most: a small, dedicated, privileged LXC
+with the printer's USB device passed straight through, running CUPS and the
+Label Local container together. It survives reboots, container restarts, and
+the printer being unplugged and replugged, without any manual fixing.
+
+1. Create a privileged Debian 13 LXC with Docker nesting enabled, and note
+   its container ID (the examples below assume `116` — use your own).
+2. Plug the DYMO into the Proxmox host and pass it into the container. Find
+   its bus/device path with `lsusb`, then set:
+
+   ```sh
+   pct set 116 --dev0 "path=/dev/bus/usb/BUS/DEVICE,gid=7,mode=0660"
+   ```
+3. Inside the container, install CUPS and the printer driver, add the queue,
+   then build and run Label Local as in the same-host setup above.
+4. Set the container and the Docker container to start automatically
+   (`pct set 116 --onboot 1`, and `restart: unless-stopped` in Compose).
+
+### Surviving a USB replug
+
+A plain `dev0` passthrough is pinned to whatever bus/device numbers the
+printer happened to enumerate at — those can change after a replug or a
+host reboot, silently breaking the passthrough. The files under
+`deploy/proxmox` fix that:
+
+- `99-dymo-4xl.rules` — a udev rule that gives the printer a stable
+  `/dev/dymo-4xl` symlink (matched by USB vendor/product ID, so it survives
+  bus renumbering) and fires a systemd unit on every USB add event.
+- `label-local-dymo-attach` / `label-local-dymo-attach.service` — that unit.
+  It resolves the printer's current device path and, if it no longer matches
+  the container's `dev0` config, stops the container, updates `dev0`, and
+  starts it again.
+
+To install them:
+
+```sh
+sudo install -m 0644 deploy/proxmox/99-dymo-4xl.rules /etc/udev/rules.d/
+sudo install -m 0755 deploy/proxmox/label-local-dymo-attach /usr/local/sbin/
+sudo install -m 0644 deploy/proxmox/label-local-dymo-attach.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo udevadm control --reload-rules
+```
+
+Edit the `container_id` at the top of `label-local-dymo-attach` first if your
+container isn't `116`. Once installed, a physical unplug/replug (or the host
+losing power and re-enumerating USB in a different order) self-heals with no
+manual intervention.
+
+## Using it
 
 1. Open Label Local in a browser.
 2. Upload a PDF, image, text, Markdown, or DOCX file.
@@ -18,89 +170,62 @@ The service is not authenticated and uses plain HTTP. Keep it on the trusted LAN
 4. Change rotation or contrast if needed.
 5. Select **Print label**.
 
-Uploads are limited to 25 MB and documents to 30 pages. Working files stay on the Label Local host.
+Uploads are limited to 25 MB and documents to 30 pages. Working files stay on
+the Label Local host.
 
 ## iPhone Share Sheet shortcut
 
 The shortcut endpoint is:
 
 ```text
-http://10.0.0.21:8080/api/share
+http://<host-ip>:8080/api/share
 ```
 
-Every successful request to this endpoint prints one label immediately. It uses the first page, detects the label, crops it, scales it to the full 4 × 6 print area, and sends it to the default DYMO queue.
+Every successful request to this endpoint prints one label immediately. It
+uses the first page, detects the label, crops it, scales it to the full 4 × 6
+print area, and sends it to the default printer queue.
 
 Create a new iOS Shortcut:
 
 1. Open the Shortcut details and enable **Show in Share Sheet**.
 2. Configure it to accept files.
 3. Add **Get Contents of URL**.
-4. Set the URL to `http://10.0.0.21:8080/api/share`.
+4. Set the URL to `http://<host-ip>:8080/api/share`.
 5. Set the method to **POST**.
 6. Set the request body to **File**.
 7. Set that file value to **Shortcut Input**.
 8. Add **Get Dictionary Value** and retrieve `status` from the response.
-9. Add an **If** action that shows `Label sent to printer` only when `status` is `queued`.
-10. In the **Otherwise** branch, show the response so a failed upload is visible instead of reporting success.
+9. Add an **If** action that shows `Label sent to printer` only when `status`
+   is `queued`.
+10. In the **Otherwise** branch, show the response so a failed upload is
+    visible instead of reporting success.
 
-Do not use a Form request body for this Shortcut. It converts PDFs into URL-encoded text and cannot print a valid label.
+Do not use a Form request body for this Shortcut. It converts PDFs into
+URL-encoded text and cannot print a valid label.
 
-### Vinted download links
-
-When sharing a Vinted label page, use a second Shortcut that sends its link instead of the page HTML:
-
-1. Enable **Show in Share Sheet** and accept URLs.
-2. Add a **URL Encode** action and set its value to **Shortcut Input**.
-3. Add a **Text** action containing `http://10.0.0.21:8080/api/share?source_url=` followed by the URL-encoded result.
-4. Add **Get Contents of URL**, set its URL to that Text result, and set the method to **POST** with no request body.
-5. Use the same `status` check as above before showing a success notification.
-
-Label Local downloads the HTTPS link itself, detects the label in the PDF, and prints it. It no longer prints a shared HTML page as text.
-
-The Shortcut works only while the iPhone can reach Label Local on the home network.
+The Shortcut works only while your phone can reach Label Local on the same
+network (or over a VPN like Tailscale if you've set that up).
 
 ## API
 
 Multipart upload:
 
 ```sh
-curl -F file=@label.pdf http://10.0.0.21:8080/api/share
+curl -F file=@label.pdf http://<host-ip>:8080/api/share
 ```
 
 This command prints immediately.
 
-The endpoint also accepts the file as a raw request body. Supply its original name using a query parameter or header:
+The endpoint also accepts the file as a raw request body. Supply its original
+name using a query parameter or header:
 
 ```sh
 curl --data-binary @label.pdf \
-  'http://10.0.0.21:8080/api/share?filename=label.pdf'
+  'http://<host-ip>:8080/api/share?filename=label.pdf'
 ```
 
-A successful response includes `status: queued`, the CUPS message, and the detected crop coordinates. A printer failure returns HTTP 503.
-
-## Run with Docker
-
-Requirements:
-
-- Docker with Compose support
-- A working CUPS queue on the Docker host
-- The DYMO queue named `DYMO_LabelWriter_4XL`
-- The host CUPS socket at `/run/cups/cups.sock`
-
-Start the application:
-
-```sh
-docker compose up --build -d
-```
-
-Then open `http://HOST-IP:8080`.
-
-Override the queue or media name in `.env` when needed:
-
-```env
-PRINTER_NAME=DYMO_LabelWriter_4XL
-PRINTER_MEDIA=1744907_4_in_x_6_in
-```
+A successful response includes `status: queued`, the CUPS message, and the
+detected crop coordinates. A printer failure returns HTTP 503.
 
 ## Development
 
@@ -111,26 +236,5 @@ python -m venv .venv
 .venv/bin/pytest
 ```
 
-The development server can process and preview documents without a printer. Actual printing requires access to a configured CUPS queue.
-
-## Proxmox deployment
-
-The current deployment is Proxmox LXC 116 at `10.0.0.21`:
-
-- Debian 13
-- Privileged LXC
-- Docker nesting enabled
-- Raw DYMO USB device passed into the LXC
-- CUPS running inside the LXC
-- Label Local running as a Docker container
-- CUPS shared with the application through the `/run/cups` directory (not the socket file — see below)
-- LXC and application container configured to start automatically
-
-The USB passthrough path (`dev0` in the LXC config) is a raw device path such as `/dev/bus/usb/005/002`, which Linux may reassign after the printer is unplugged and replugged. The files under `deploy/proxmox` are installed on the host to handle this automatically:
-
-- `99-dymo-4xl.rules` creates a stable `/dev/dymo-4xl` symlink for the printer and fires a systemd unit on every USB add event.
-- `label-local-dymo-attach.service` runs `label-local-dymo-attach` (installed at `/usr/local/sbin/label-local-dymo-attach`), which resolves the printer's current device path and, if it no longer matches container 116's `dev0` config, stops the container, updates `dev0`, and starts it again.
-
-This means a physical unplug/replug (or the host losing power and re-enumerating USB in a different order) self-heals without manual intervention.
-
-Do not bind-mount `/run/cups/cups.sock` directly into the application container. `cupsd` deletes and recreates that socket file on every restart, which orphans a file-level bind mount and makes the app report no printers until the container is recreated. Mount the `/run/cups` directory instead, as `compose.yaml` does.
+The development server can process and preview documents without a printer.
+Actual printing requires access to a configured CUPS queue.

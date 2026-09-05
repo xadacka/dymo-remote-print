@@ -50,3 +50,5 @@ h1 em { color:var(--coral); font-family:Iowan Old Style,Baskerville,Georgia,seri
   .print-button{position:fixed;z-index:4;left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));width:calc(100% - 24px);height:58px;margin:0;box-shadow:0 10px 30px rgba(23,63,53,.35)}.print-message{padding-bottom:6px}
 }
 @media (max-width:380px){.editor-heading{display:block}.badge{display:inline-block;margin-top:10px}.canvas-wrap{min-height:330px;height:52svh}.tool-button span{font-size:11px}.field-row{grid-template-columns:1fr 68px}}
+.attribution { padding:16px 4vw 26px; color:var(--muted); font-size:11px; text-align:center; }
+.attribution a { color:inherit; font-weight:600; }

@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 
+# ID of the LXC container running Label Local. Edit this for your setup.
 container_id=116
 device_path=$(readlink -f /dev/dymo-4xl)
 current=$(pct config "$container_id" 2>/dev/null | sed -n 's/^dev0: path=\([^,]*\).*/\1/p')
