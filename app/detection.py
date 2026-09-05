@@ -97,10 +97,11 @@ def detect_label(image: Image.Image) -> Detection:
         x, y, w, h = _clamp_box(x, y, w, h, ww, wh)
         confidence = min(0.96, max(0.45, score))
     else:
-        # Safe fallback: prefer the denser half of the page, but make uncertainty explicit.
-        halves = [(0, 0, ww // 2, wh), (ww // 2, 0, ww - ww // 2, wh)] if ww >= wh else [(0, 0, ww, wh // 2), (0, wh // 2, ww, wh - wh // 2)]
-        x, y, w, h = max(halves, key=lambda b: float(np.std(work[b[1] : b[1] + b[3], b[0] : b[0] + b[2]])))
-        confidence, reason = 0.2, "best visual region; please adjust"
+        # No label-shaped region found (e.g. an ordinary photo): use the whole
+        # image rather than guessing a half of the page. printing.prepare_label
+        # fills the page edge-to-edge for a near-full-frame crop like this one.
+        x, y, w, h = 0, 0, ww, wh
+        confidence, reason = 0.15, "no label found; printing the full image"
 
     return Detection(x / ww, y / wh, w / ww, h / wh, confidence, reason)
 

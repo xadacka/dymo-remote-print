@@ -12,7 +12,9 @@ services:
       PRINTER_MEDIA: ${PRINTER_MEDIA:-1744907_4_in_x_6_in}
     volumes:
       - label-data:/data
-      - /run/cups/cups.sock:/run/cups/cups.sock
+      # Mount the directory, not the socket file: cupsd deletes and recreates
+      # cups.sock on every restart, which orphans a file-level bind mount.
+      - /run/cups:/run/cups
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
       interval: 30s

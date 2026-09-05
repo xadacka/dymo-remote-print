@@ -123,7 +123,14 @@ The current deployment is Proxmox LXC 116 at `10.0.0.21`:
 - Raw DYMO USB device passed into the LXC
 - CUPS running inside the LXC
 - Label Local running as a Docker container
-- CUPS shared with the application through `/run/cups/cups.sock`
+- CUPS shared with the application through the `/run/cups` directory (not the socket file — see below)
 - LXC and application container configured to start automatically
 
-The current USB passthrough path is `/dev/bus/usb/005/002`. Linux may assign a different device number after the printer is unplugged. The optional files under `deploy/proxmox` can update container 116 when that happens, but this host-level automation is not installed by default and should be reviewed before use.
+The USB passthrough path (`dev0` in the LXC config) is a raw device path such as `/dev/bus/usb/005/002`, which Linux may reassign after the printer is unplugged and replugged. The files under `deploy/proxmox` are installed on the host to handle this automatically:
+
+- `99-dymo-4xl.rules` creates a stable `/dev/dymo-4xl` symlink for the printer and fires a systemd unit on every USB add event.
+- `label-local-dymo-attach.service` runs `label-local-dymo-attach` (installed at `/usr/local/sbin/label-local-dymo-attach`), which resolves the printer's current device path and, if it no longer matches container 116's `dev0` config, stops the container, updates `dev0`, and starts it again.
+
+This means a physical unplug/replug (or the host losing power and re-enumerating USB in a different order) self-heals without manual intervention.
+
+Do not bind-mount `/run/cups/cups.sock` directly into the application container. `cupsd` deletes and recreates that socket file on every restart, which orphans a file-level bind mount and makes the app report no printers until the container is recreated. Mount the `/run/cups` directory instead, as `compose.yaml` does.

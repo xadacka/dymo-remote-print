@@ -17,6 +17,22 @@ def list_printers() -> list[str]:
     return [line.split()[1] for line in result.stdout.splitlines() if line.startswith("printer ") and len(line.split()) > 1]
 
 
+def _cover_crop(image: Image.Image, target_size: tuple[int, int]) -> Image.Image:
+    """Center-crop to the target aspect ratio so a resize fills it with no borders."""
+    target_ratio = target_size[0] / target_size[1]
+    width, height = image.size
+    ratio = width / height
+    if ratio > target_ratio:
+        new_width = max(1, round(height * target_ratio))
+        x1 = (width - new_width) // 2
+        image = image.crop((x1, 0, x1 + new_width, height))
+    elif ratio < target_ratio:
+        new_height = max(1, round(width / target_ratio))
+        y1 = (height - new_height) // 2
+        image = image.crop((0, y1, width, y1 + new_height))
+    return image
+
+
 def prepare_label(source: Path, crop: dict[str, float], rotation: int = 0, contrast: float = 1.0) -> Image.Image:
     image = Image.open(source).convert("RGB")
     if rotation % 360:
@@ -27,8 +43,16 @@ def prepare_label(source: Path, crop: dict[str, float], rotation: int = 0, contr
     x2 = max(x1 + 1, min(width, round((crop["x"] + crop["width"]) * width)))
     y2 = max(y1 + 1, min(height, round((crop["y"] + crop["height"]) * height)))
     image = image.crop((x1, y1, x2, y2))
+    # A near-full-frame crop is treated as an ordinary photo, not a label: fill
+    # the whole page (cropping any excess) instead of letterboxing on white.
+    fill = crop["width"] >= 0.98 and crop["height"] >= 0.98
+    if fill:
+        image = _cover_crop(image, LABEL_SIZE)
     image = ImageEnhance.Contrast(ImageOps.grayscale(image)).enhance(max(0.5, min(2.5, contrast)))
-    scale = min(LABEL_SIZE[0] / image.width, LABEL_SIZE[1] / image.height)
+    if fill:
+        scale = max(LABEL_SIZE[0] / image.width, LABEL_SIZE[1] / image.height)
+    else:
+        scale = min(LABEL_SIZE[0] / image.width, LABEL_SIZE[1] / image.height)
     image = image.resize((max(1, round(image.width * scale)), max(1, round(image.height * scale))), Image.Resampling.LANCZOS)
     canvas = Image.new("L", LABEL_SIZE, "white")
     canvas.paste(image, ((LABEL_SIZE[0] - image.width) // 2, (LABEL_SIZE[1] - image.height) // 2))
