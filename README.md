@@ -238,3 +238,7 @@ python -m venv .venv
 
 The development server can process and preview documents without a printer.
 Actual printing requires access to a configured CUPS queue.
+
+## License
+
+[MIT](LICENSE)
